@@ -2,12 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 Created on Wed Nov 10 14:26:50 2021
-
-@author: ryb003
+@author: Maciek
 """
 
 import requests
 import numpy as np
+
+from io import BytesIO
+import zipfile
+import os
+import json
 
 ## A method to convert json results to TREC output format
 def to_trec(results, run_id='ranking', id_index=0, score_index=1, save_to_disk=True):
@@ -23,32 +27,51 @@ def to_trec(results, run_id='ranking', id_index=0, score_index=1, save_to_disk=T
         np.savetxt(str(run_id)+'.results', trec_vals, delimiter="\t", fmt='%s')
     return trec_vals
 
+
+def unzip_and_read_json(response, output_folder="qrel_docs"):
+    """Unzip the qrel_docs response and return the json"""
+    # extract the zip file contents
+    zipped = zipfile.ZipFile(BytesIO(response.content))
+    zipped.extractall(output_folder)
+
+    # read the json from zip file
+    root, dirs, files = next(os.walk("qrel_docs")) # the unzipped folder contains a single json file, find its name
+    file_path = os.path.join(root, files[0])
+    with open(file_path, 'r') as file:
+        json_dict = json.loads(file.read())
+    
+    # remove file and folder
+    os.remove(file_path)
+    os.rmdir(output_folder)
+    return json_dict
+
+
 ###
 ## Calls for getting result sets
 
 # 1 - DFR baseline for 'genomics2004' experiment (C=1)
-x = requests.get('http://130.155.193.111:5001/api/dfr/genomics2004')
+x = requests.get('https://a2a.csiro.au/api/dfr/genomics2004')
 d1=x.json()
 
 # 2 - DFR baseline for 'ct2017' experiment (C=2) with alternative topic term boosts
-x = requests.get('http://130.155.193.111:5001/api/dfr/ct2017?c=2&t=($gene)^2 ($disease)^3')
+x = requests.get('https://a2a.csiro.au/api/dfr/ct2017?c=2&t=($gene)^2 ($disease)^3')
 d2=x.json()
 
 # 2 with rm3 - DFR+RM3 baseline for 'ct2017' experiment (C=2; RM3 parameters: m=10, miu=100, alpha=0.4, k=5)
 ## note this also works for bm25 (needs substituting dfr->bm25 and c for bm25 params, b and k1, in the call)
-x = requests.get('http://130.155.193.111:5001/api/dfr_rm3/ct2017?c=2&m=10&miu=100&alpha=0.4&k=5')
+x = requests.get('https://a2a.csiro.au/api/dfr_rm3/ct2017?c=2&m=10&miu=100&alpha=0.4&k=5')
 d2_rm3=x.json()
 
 # 2 - DFR baseline for 'ct2017' experiment (C=2)
-x = requests.get('http://130.155.193.111:5001/api/dfr/ct2017')
+x = requests.get('https://a2a.csiro.au/api/dfr/ct2017')
 d2_1=x.json()
 
 # 3 - bm25 baseline for 'ct2021_eligible' experiment (b=1, k1=1)
-x = requests.get('http://130.155.193.111:5001/api/bm25/ct2021_eligible?b=1&k1=1')
+x = requests.get('https://a2a.csiro.au/api/bm25/ct2021_eligible?b=1&k1=1')
 d3=x.json()
 
 # 3_1 - bm25 baseline for 'ct2021' experiment; default parameters
-x = requests.get('http://130.155.193.111:5001/api/bm25/ct2021')
+x = requests.get('https://a2a.csiro.au/api/bm25/ct2021')
 d4=x.json()
 
 
@@ -77,25 +100,20 @@ trec_format=to_trec(rankings, run_id='ct21_test')
 ###
 ## Get a document json (document contents)
 doc_id=rankings['1'][0][0]
-x = requests.get('http://130.155.193.111:5001/api/doc/ct2021/'+doc_id)
+x = requests.get('https://a2a.csiro.au/api/doc/ct2021/'+doc_id)
 doc=x.json()
 # print(doc)
 
 ###
 ## Get topics (queries) for a given task (here ct2021)
-x = requests.get('http://130.155.193.111:5001/api/topics/ct2021')
+x = requests.get('https://a2a.csiro.au/api/topics/ct2021')
 topics=x.json()
 
 ### 
 ## Get qrels (topic-document human judgments) for a specific task
 ## Row format is: [topic_id, #, doc_id, relevance_score]
-x = requests.get('http://130.155.193.111:5001/api/qrels/ct2021')
+x = requests.get('https://a2a.csiro.au/api/qrels/ct2021')
 qrels=x.json()
-
-### 
-## Convenience method to get all document IDs (topic-document human judgments) for a specific task
-# x = requests.get('http://130.155.193.111:5001/api/all_doc_ids/ct2017')
-# all_ids=x.json()
 
 
 ###
@@ -103,7 +121,7 @@ qrels=x.json()
 ## In real usage this could be a re-ranked results sent for evaluation 
 ## The results object is just like the one for the baseline run, but without the 'rankings' content
 files = {'file': open('ct21_test.results','rb')}
-x = requests.post('http://130.155.193.111:5001/api/eval/ct2021_eligible', files=files)
+x = requests.post('https://a2a.csiro.au/api/eval/ct2021_eligible', files=files)
 results=x.json()
 ## these two should be the same
 print(results['all'])
@@ -114,15 +132,15 @@ print(d3['all'])
 ## The request includes a valid results file, for which the documents are fetched.
 ##
 files = {'file': open('ct21_test.results','rb')}
-x = requests.post('http://130.155.193.111:5001/api/result_docs/ct2021_eligible?k=10', files=files)
+x = requests.post('https://a2a.csiro.au/api/result_docs/ct2021_eligible?k=10', files=files)
 result_docs=x.json()
 
 
 ###
 ## Call for all documents (all fields) from a given qrel-set. Convenience method for
 ## compiling an LTR training set directly from historical qrels.
-x = requests.get('http://130.155.193.111:5001/api/qrel_docs/sigir_ct')
-qrels_docs=x.json()
+x = requests.get('https://a2a.csiro.au/api/qrel_docs/sigir_ct')
+qrels_docs=unzip_and_read_json(x)
 
 
 ###
@@ -130,5 +148,5 @@ qrels_docs=x.json()
 ## specifying a custom topic XML file, e.g., here is a DFR call for the first two topics
 ## a 'user_query' topic field can be used as a template (see the file for reference)
 files = {'file': open('two_topics_2017.xml','rb')}
-x = requests.post('http://130.155.193.111:5001/api/dfr/ct2017?t=$user_query', files=files)
+x = requests.post('https://a2a.csiro.au/api/dfr/ct2017?t=$user_query', files=files)
 d_custom_topics=x.json()
